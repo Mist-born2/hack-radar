@@ -32,7 +32,7 @@ npm run build
 npm start
 ```
 
-On first run, a QR code appears in the terminal. Scan it with WhatsApp (Linked Devices). The session persists in `./data/wwebjs_auth/` so you only need to scan once.
+On first run, a QR code appears in the terminal. Scan it with WhatsApp (Linked Devices). If hosted logs render the QR too large or distorted, the bot also prints a QR image link you can open in a browser and scan. The session persists in `./data/wwebjs_auth/` so you only need to scan once.
 
 ### Dry Run
 
