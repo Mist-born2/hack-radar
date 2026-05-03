@@ -1,0 +1,23 @@
+services:
+  hackradar:
+    build: .
+    container_name: hackathon-radar
+    restart: unless-stopped
+    environment:
+      - WHATSAPP_GROUP_ID=${WHATSAPP_GROUP_ID:-}
+      - WHATSAPP_GROUP_NAME=${WHATSAPP_GROUP_NAME:-HackathonRadar}
+      - SCAN_CRON=${SCAN_CRON:-0 */6 * * *}
+      - SCAN_ON_START=${SCAN_ON_START:-true}
+      - DRY_RUN=${DRY_RUN:-false}
+      - MAX_ALERTS_PER_SCAN=${MAX_ALERTS_PER_SCAN:-10}
+      - DATA_DIR=/app/data
+      - LOG_LEVEL=${LOG_LEVEL:-info}
+      - NITTER_INSTANCES=${NITTER_INSTANCES:-}
+      - X_SEARCH_QUERIES=${X_SEARCH_QUERIES:-}
+    volumes:
+      - hackradar-data:/app/data
+    stdin_open: true
+    tty: true
+
+volumes:
+  hackradar-data:
