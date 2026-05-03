@@ -5,6 +5,17 @@ import { log } from '../config';
 import { fetchPage } from '../http';
 import { unwrapRedirectUrl } from '../url';
 
+const X_MAX_RESULT_AGE_DAYS = (() => {
+  const v = process.env.X_MAX_RESULT_AGE_DAYS?.trim();
+  if (!v) return 30;
+  const n = parseInt(v, 10);
+  return isNaN(n) || n < 1 ? 30 : n;
+})();
+
+const CURRENT_YEAR = new Date().getFullYear();
+const CURRENT_MONTH = new Date().toLocaleString('en-US', { month: 'long' });
+const CURRENT_SHORT_MONTH = new Date().toLocaleString('en-US', { month: 'short' });
+
 const DEFAULT_QUERIES = [
   'hackathon',
   'bounty',
@@ -19,15 +30,39 @@ const DEFAULT_QUERIES = [
   'ai hackathon prize',
 ];
 
+const STALE_YEARS = ['2020', '2021', '2022', '2023', '2024'];
+
+const STALE_REJECT_PATTERNS = [
+  /\b20(?:20|21|22|23|24)\s+hackathon/i,
+  /hackathon\s+20(?:20|21|22|23|24)/i,
+  /\b20(?:20|21|22|23|24)\s+bounty/i,
+  /bounty\s+20(?:20|21|22|23|24)/i,
+  /\b20(?:20|21|22|23|24)\s+winners?\b/i,
+  /\bwinner[s]?\s+(?:announced|revealed)\b/i,
+  /\brecap\b/i,
+  /\bresults?\s+(?:announced|are\s+in)\b/i,
+  /\bended\b/i,
+  /\bconcluded\b/i,
+  /\barchive[ds]?\b/i,
+  /\bpast\s+(?:hackathon|event|bounty)/i,
+];
+
+const CURRENT_OPEN_SIGNALS = [
+  'open', 'apply', 'register', 'deadline', 'submit', 'now',
+  'launch', 'announcing', 'new', 'live', '2026', 'this week',
+  'this month', 'applications open', 'submissions open', 'join',
+  'sign up', 'starting', 'begins', 'kicks off',
+];
+
 const WEB_SEARCH_QUERIES = [
-  'site:x.com hackathon bounty prize',
-  'site:x.com solana bounty',
-  'site:x.com dorahacks hackathon',
-  'site:x.com web3 grant',
-  'site:twitter.com hackathon prize 2025 OR 2026',
-  'site:x.com superteam bounty',
-  'site:x.com ethglobal hackathon',
-  'site:x.com ai hackathon prize',
+  `site:x.com hackathon bounty prize ${CURRENT_YEAR}`,
+  `site:x.com solana bounty ${CURRENT_YEAR} open`,
+  `site:x.com dorahacks hackathon ${CURRENT_YEAR}`,
+  `site:x.com web3 grant ${CURRENT_YEAR} apply`,
+  `site:twitter.com hackathon prize ${CURRENT_YEAR}`,
+  `site:x.com superteam bounty ${CURRENT_YEAR}`,
+  `site:x.com ethglobal hackathon ${CURRENT_YEAR}`,
+  `site:x.com ai hackathon prize ${CURRENT_YEAR} open now`,
 ];
 
 export class XScanner implements Scanner {
@@ -71,6 +106,18 @@ export class XScanner implements Scanner {
         }
       }
     }
+
+    const beforeRecency = opportunities.length;
+    const filtered = opportunities.filter(opp => {
+      const text = `${opp.title} ${opp.summary || ''} ${opp.deadline || ''}`;
+      return !isStaleXResult(text);
+    });
+    const staleDropped = beforeRecency - filtered.length;
+    if (staleDropped > 0) {
+      log.info(`X/Twitter: rejected ${staleDropped} stale result(s) from all paths (recency filter)`);
+    }
+    opportunities.length = 0;
+    opportunities.push(...filtered);
 
     log.info(`X/Twitter: found ${opportunities.length} opportunities across ${this.queries.length} queries ` +
       `(nitter: ${this.stats.nitter}, syndication: ${this.stats.syndication}, ` +
@@ -275,6 +322,28 @@ export class XScanner implements Scanner {
             if (!isOpportunityTweet(combined)) return;
             if (!link) return;
 
+            const pubDateStr = $el.find('pubDate, published, updated').text().trim();
+            if (pubDateStr) {
+              const pubDate = new Date(pubDateStr);
+              if (!isNaN(pubDate.getTime())) {
+                const ageDays = (Date.now() - pubDate.getTime()) / (1000 * 60 * 60 * 24);
+                if (ageDays > X_MAX_RESULT_AGE_DAYS) {
+                  const lower = combined.toLowerCase();
+                  const hasOpenOverride = lower.includes(String(CURRENT_YEAR)) &&
+                    CURRENT_OPEN_SIGNALS.some(s => lower.includes(s));
+                  if (!hasOpenOverride) {
+                    log.debug(`X: RSS rejected stale item (${Math.round(ageDays)}d old): "${title}"`);
+                    return;
+                  }
+                }
+              }
+            }
+
+            if (isStaleXResult(combined)) {
+              log.debug(`X: RSS rejected stale content: "${title}"`);
+              return;
+            }
+
             const parsed = parseTweetContent(combined, '');
 
             results.push({
@@ -307,11 +376,18 @@ export class XScanner implements Scanner {
   private async webSearchFallback(): Promise<RawOpportunity[]> {
     const results: RawOpportunity[] = [];
     const seenUrls = new Set<string>();
+    let staleRejected = 0;
 
     for (const query of WEB_SEARCH_QUERIES) {
       try {
         const found = await this.searchWebForXPosts(query);
         for (const opp of found) {
+          const text = `${opp.title} ${opp.summary || ''} ${opp.deadline || ''}`;
+          if (isStaleXResult(text)) {
+            staleRejected++;
+            log.debug(`X: web search rejected stale result: "${opp.title}" (${opp.url})`);
+            continue;
+          }
           if (!seenUrls.has(opp.url)) {
             seenUrls.add(opp.url);
             results.push(opp);
@@ -324,7 +400,10 @@ export class XScanner implements Scanner {
     }
 
     this.stats.websearch += results.length;
-    log.info(`X/Twitter web search fallback: found ${results.length} results from ${WEB_SEARCH_QUERIES.length} queries`);
+    if (staleRejected > 0) {
+      log.info(`X/Twitter web search fallback: rejected ${staleRejected} stale result(s)`);
+    }
+    log.info(`X/Twitter web search fallback: found ${results.length} results from ${WEB_SEARCH_QUERIES.length} queries (after recency filter)`);
     return results;
   }
 
@@ -357,6 +436,7 @@ export class XScanner implements Scanner {
         const combined = `${title} ${snippet}`.toLowerCase();
 
         if (!isOpportunityTweet(`${title} ${snippet}`)) return;
+        if (!hasCurrentSignal(combined)) return;
 
         const parsed = parseTweetContent(`${title} ${snippet}`, '');
 
@@ -397,6 +477,8 @@ export class XScanner implements Scanner {
 
               const snippet = $el.find('.snippet-description, .snippet-content, p').text().trim();
               if (!isOpportunityTweet(`${title} ${snippet}`)) return;
+              const braveCombined = `${title} ${snippet}`.toLowerCase();
+              if (!hasCurrentSignal(braveCombined)) return;
 
               const parsed = parseTweetContent(`${title} ${snippet}`, '');
 
@@ -471,6 +553,70 @@ function isOpportunityTweet(text: string): boolean {
   if (rejectPatterns.some(p => p.test(text))) return false;
 
   return true;
+}
+
+export function isStaleXResult(text: string): boolean {
+  const lower = text.toLowerCase();
+
+  if (STALE_REJECT_PATTERNS.some(p => p.test(text))) {
+    const hasCurrentOverride = lower.includes(String(CURRENT_YEAR)) &&
+      CURRENT_OPEN_SIGNALS.some(s => lower.includes(s));
+    if (!hasCurrentOverride) return true;
+  }
+
+  for (const year of STALE_YEARS) {
+    if (lower.includes(year)) {
+      const hasCurrentYear = lower.includes(String(CURRENT_YEAR));
+      const hasOpenSignal = CURRENT_OPEN_SIGNALS.some(s => lower.includes(s));
+      if (!(hasCurrentYear && hasOpenSignal)) return true;
+    }
+  }
+
+  const parsedDate = parseDateFromText(text);
+  if (parsedDate) {
+    const now = new Date();
+    const ageDays = (now.getTime() - parsedDate.getTime()) / (1000 * 60 * 60 * 24);
+    if (ageDays > X_MAX_RESULT_AGE_DAYS) {
+      const hasOpenOverride = lower.includes(String(CURRENT_YEAR)) &&
+        CURRENT_OPEN_SIGNALS.some(s => lower.includes(s));
+      if (!hasOpenOverride) return true;
+    }
+  }
+
+  return false;
+}
+
+export function parseDateFromText(text: string): Date | null {
+  const patterns: RegExp[] = [
+    /\b(\d{1,2})[/\-](\d{1,2})[/\-](\d{4})\b/,
+    /\b(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{1,2}),?\s*(\d{4})\b/i,
+    /\b(\d{1,2})\s+(Jan(?:uary)?|Feb(?:ruary)?|Mar(?:ch)?|Apr(?:il)?|May|Jun(?:e)?|Jul(?:y)?|Aug(?:ust)?|Sep(?:tember)?|Oct(?:ober)?|Nov(?:ember)?|Dec(?:ember)?)\s+(\d{4})\b/i,
+  ];
+
+  for (const pattern of patterns) {
+    const match = text.match(pattern);
+    if (!match) continue;
+
+    let d: Date | null = null;
+    if (/^\d+$/.test(match[1]) && /^\d+$/.test(match[2]) && /^\d{4}$/.test(match[3])) {
+      const month = parseInt(match[1], 10) - 1;
+      const day = parseInt(match[2], 10);
+      const year = parseInt(match[3], 10);
+      d = new Date(year, month, day);
+    } else if (/^[A-Za-z]/.test(match[1])) {
+      d = new Date(`${match[1]} ${match[2]}, ${match[3]}`);
+    } else if (/^[A-Za-z]/.test(match[2])) {
+      d = new Date(`${match[2]} ${match[1]}, ${match[3]}`);
+    }
+
+    if (d && !isNaN(d.getTime())) return d;
+  }
+
+  return null;
+}
+
+function hasCurrentSignal(lowerText: string): boolean {
+  return CURRENT_OPEN_SIGNALS.some(s => lowerText.includes(s));
 }
 
 function nitterToTwitter(nitterUrl: string, instance: string): string {
