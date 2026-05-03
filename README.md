@@ -188,7 +188,7 @@ src/
 
 ## Caveats
 
-- **WhatsApp Web sessions** can expire if WhatsApp mobile is offline for extended periods. Re-scan the QR if the session breaks.
+- **WhatsApp Web sessions** can expire if WhatsApp mobile is offline for extended periods. Re-scan the QR if the session breaks. On container platforms, rapid restarts can leave stale Chromium `Singleton*` lock files in the session directory; the bot removes those on startup before launching WhatsApp Web.
 - **Web scraping** is inherently fragile. Sites change their HTML structure. Scanners are written defensively and will log errors rather than crash.
 - **X/Twitter access** depends on third-party Nitter instances and public endpoints which may be unreliable. The scanner degrades gracefully.
 - **Rate limiting** — the bot adds delays between requests. If you get blocked, increase delays or reduce query count.

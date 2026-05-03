@@ -1,3 +1,5 @@
+import fs from 'fs';
+import path from 'path';
 import { Client, LocalAuth, Chat, GroupChat } from 'whatsapp-web.js';
 import qrcode from 'qrcode-terminal';
 import { config, log } from './config';
@@ -23,6 +25,8 @@ export async function initWhatsApp(): Promise<void> {
     if (onReadyCallback) onReadyCallback();
     return;
   }
+
+  clearStaleChromiumLocks(config.sessionPath);
 
   client = new Client({
     authStrategy: new LocalAuth({ dataPath: config.sessionPath }),
@@ -67,6 +71,33 @@ export async function initWhatsApp(): Promise<void> {
   });
 
   await client.initialize();
+}
+
+function clearStaleChromiumLocks(rootDir: string): void {
+  const lockFileNames = new Set(['SingletonLock', 'SingletonSocket', 'SingletonCookie']);
+
+  try {
+    if (!fs.existsSync(rootDir)) return;
+
+    const visit = (dir: string): void => {
+      for (const entry of fs.readdirSync(dir, { withFileTypes: true })) {
+        const fullPath = path.join(dir, entry.name);
+        if (entry.isDirectory()) {
+          visit(fullPath);
+          continue;
+        }
+
+        if (lockFileNames.has(entry.name)) {
+          fs.rmSync(fullPath, { force: true });
+          log.warn(`Removed stale Chromium profile lock: ${fullPath}`);
+        }
+      }
+    };
+
+    visit(rootDir);
+  } catch (e) {
+    log.warn('Failed to clean stale Chromium profile locks:', e);
+  }
 }
 
 async function resolveTargetGroup(): Promise<void> {
