@@ -2,6 +2,7 @@ import * as cheerio from 'cheerio';
 import { RawOpportunity, Scanner } from '../types';
 import { log } from '../config';
 import { fetchPage, fetchJson } from '../http';
+import { buildSuperteamUrl } from '../url';
 
 export class SuperteamScanner implements Scanner {
   name = 'SuperteamEarn';
@@ -22,11 +23,14 @@ export class SuperteamScanner implements Scanner {
 
       const $ = cheerio.load(html);
 
-      $('a[href*="/listings/"]').each((_, el) => {
+      $('a[href*="/listing"]').each((_, el) => {
         try {
           const $a = $(el);
           let href = $a.attr('href') || '';
           if (!href.startsWith('http')) href = `https://earn.superteam.fun${href}`;
+
+          const slug = extractSlugFromHref(href);
+          const url = slug ? buildSuperteamUrl(slug) : href;
 
           const container = $a.closest('div').parent();
           const title = container.find('p, h3, h4, [class*="title"]').first().text().trim()
@@ -50,7 +54,7 @@ export class SuperteamScanner implements Scanner {
 
           opportunities.push({
             title,
-            url: href,
+            url,
             source: 'SuperteamEarn',
             type,
             prize,
@@ -93,7 +97,7 @@ export class SuperteamScanner implements Scanner {
           const slug = (item.slug as string) || '';
           if (!title) continue;
 
-          const url = slug ? `https://earn.superteam.fun/listings/${slug}` : `https://earn.superteam.fun`;
+          const url = slug ? buildSuperteamUrl(slug) : 'https://superteam.fun/earn';
 
           let prize: string | undefined;
           if (item.usdValue) prize = `$${Number(item.usdValue).toLocaleString()}`;
@@ -144,6 +148,18 @@ export class SuperteamScanner implements Scanner {
 
     return opportunities;
   }
+}
+
+function extractSlugFromHref(href: string): string | null {
+  const patterns = [
+    /\/listings?\/([\w-]+)/,
+    /\/earn\/listings?\/([\w-]+)/,
+  ];
+  for (const p of patterns) {
+    const m = href.match(p);
+    if (m) return m[1];
+  }
+  return null;
 }
 
 function extractSuperteamTags(text: string): string[] {

@@ -1,5 +1,5 @@
 import { RawOpportunity, QualifiedOpportunity, ScanResult, Scanner } from './types';
-import { log } from './config';
+import { config, log } from './config';
 import {
   XScanner,
   DevpostScanner,
@@ -13,6 +13,7 @@ import {
 import { deduplicateWithinScan, normalizeUrl, normalizeTitle, filterAlreadyAlerted } from './dedupe';
 import { qualifies } from './qualifier';
 import { assignPriority, sortByPriority } from './priority';
+import { validateUrl } from './url';
 
 export function createScanners(): Scanner[] {
   return [
@@ -71,10 +72,30 @@ export async function runScan(scanners: Scanner[]): Promise<QualifiedOpportunity
 
   const sorted = sortByPriority(fresh);
 
+  const max = config.scan.maxAlertsPerScan;
+  const validated: QualifiedOpportunity[] = [];
+  let invalidCount = 0;
+  for (const opp of sorted) {
+    if (validated.length >= max) break;
+    const result = await validateUrl(opp.url);
+    if (result === 'invalid') {
+      log.warn(`Dropping invalid URL (404/410): ${opp.url} — "${opp.title}"`);
+      invalidCount++;
+      continue;
+    }
+    if (result === 'error') {
+      log.debug(`URL validation error (keeping): ${opp.url}`);
+    }
+    validated.push(opp);
+  }
+  if (invalidCount > 0) {
+    log.info(`URL validation dropped ${invalidCount} invalid links`);
+  }
+
   const summary = results.map(r =>
     `  ${r.source}: ${r.opportunities.length} found${r.error ? ` (ERROR: ${r.error})` : ''}`
   ).join('\n');
   log.info(`Scan summary:\n${summary}`);
 
-  return sorted;
+  return validated;
 }

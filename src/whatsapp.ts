@@ -5,7 +5,7 @@ import qrcode from 'qrcode-terminal';
 import { config, log } from './config';
 import { QualifiedOpportunity } from './types';
 import { formatAlert, formatIntroMessage } from './format';
-import { markAlerted } from './db';
+import { reserveAlert } from './db';
 
 let client: Client;
 let targetChat: Chat | null = null;
@@ -142,7 +142,36 @@ export async function sendAlerts(opportunities: QualifiedOpportunity[]): Promise
   }
 
   const max = config.scan.maxAlertsPerScan;
-  const toSend = opportunities.slice(0, max);
+  const toSend: QualifiedOpportunity[] = [];
+
+  for (const opp of opportunities) {
+    if (toSend.length >= max) break;
+
+    if (config.dryRun) {
+      toSend.push(opp);
+    } else {
+      const reserved = reserveAlert({
+        normalizedUrl: opp.normalizedUrl,
+        normalizedTitle: opp.normalizedTitle,
+        title: opp.title,
+        url: opp.url,
+        source: opp.source,
+        priority: opp.priority,
+        alertedAt: new Date().toISOString(),
+      });
+      if (reserved) {
+        toSend.push(opp);
+      } else {
+        log.debug(`Skipping already-reserved alert: ${opp.title}`);
+      }
+    }
+  }
+
+  if (toSend.length === 0) {
+    log.info('All opportunities were already reserved/sent');
+    return 0;
+  }
+
   if (opportunities.length > max) {
     log.info(`Capping alerts: ${opportunities.length} found, sending top ${max}`);
   }
@@ -160,8 +189,9 @@ export async function sendAlerts(opportunities: QualifiedOpportunity[]): Promise
   for (const opp of highPriority) {
     const success = await sendMessage(formatAlert(opp));
     if (success) {
-      if (!config.dryRun) recordAlert(opp);
       sent++;
+    } else if (!config.dryRun) {
+      log.warn(`Send failed after reservation for: ${opp.title} — keeping reserved to prevent duplicate on retry`);
     }
     await sleep(1500);
   }
@@ -169,8 +199,9 @@ export async function sendAlerts(opportunities: QualifiedOpportunity[]): Promise
   for (const opp of rest) {
     const success = await sendMessage(formatAlert(opp));
     if (success) {
-      if (!config.dryRun) recordAlert(opp);
       sent++;
+    } else if (!config.dryRun) {
+      log.warn(`Send failed after reservation for: ${opp.title} — keeping reserved to prevent duplicate on retry`);
     }
     await sleep(1500);
   }
@@ -198,22 +229,6 @@ async function sendMessage(text: string): Promise<boolean> {
     log.error('Failed to send WhatsApp message:', e);
     log.info('Unsent message:\n' + text);
     return false;
-  }
-}
-
-function recordAlert(opp: QualifiedOpportunity): void {
-  try {
-    markAlerted({
-      normalizedUrl: opp.normalizedUrl,
-      normalizedTitle: opp.normalizedTitle,
-      title: opp.title,
-      url: opp.url,
-      source: opp.source,
-      priority: opp.priority,
-      alertedAt: new Date().toISOString(),
-    });
-  } catch (e) {
-    log.error('Failed to record alert in DB:', e);
   }
 }
 
