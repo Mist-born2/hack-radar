@@ -37,6 +37,4 @@ RUN npm run build && npm prune --production
 
 RUN mkdir -p /app/data
 
-VOLUME ["/app/data"]
-
 CMD ["node", "dist/index.js"]
