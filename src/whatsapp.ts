@@ -39,7 +39,9 @@ export async function initWhatsApp(): Promise<void> {
   });
 
   client.on('qr', (qr: string) => {
+    const qrImageUrl = `https://api.qrserver.com/v1/create-qr-code/?size=360x360&margin=20&data=${encodeURIComponent(qr)}`;
     log.info('Scan this QR code with WhatsApp:');
+    log.info(`If the terminal QR is unreadable, open this QR image link and scan it: ${qrImageUrl}`);
     qrcode.generate(qr, { small: true });
   });
 
