@@ -56,6 +56,7 @@ DRY_RUN=true npm start
 | `LOG_LEVEL` | `info` | `debug`, `info`, `warn`, `error` |
 | `NITTER_INSTANCES` | _(built-in list)_ | Comma-separated Nitter instance URLs for X scanning |
 | `X_SEARCH_QUERIES` | _(built-in list)_ | Comma-separated custom X/Twitter search terms |
+| `X_MAX_RESULT_AGE_DAYS` | `30` | Max age (days) for X web-search fallback results before rejection |
 
 ## Group Targeting
 
@@ -126,6 +127,17 @@ The X scanner uses public web-accessible methods (no API key required):
 2. **Twitter syndication** — fetches public timeline embeds for key accounts (DoraHacks, Solana, EthGlobal, Superteam, etc.)
 3. **RSS bridges** — tries RSSHub and similar services for search-to-RSS conversion
 4. **Web search fallback** — if Nitter/syndication/RSS return zero results, searches DuckDuckGo and Brave for `site:x.com` and `site:twitter.com` posts about hackathons, bounties, and grants. Parses results, unwraps redirects, filters to only x.com/twitter.com status URLs, and builds opportunities from titles and snippets.
+
+### Recency Filtering
+
+All X/Twitter results (from every path — Nitter, syndication, RSS, and web search) are filtered for recency to avoid surfacing old or concluded events:
+
+- **Stale year rejection:** Results mentioning 2020–2024 without a strong current-year + open signal are dropped. A result that says "2023 hackathon" is rejected unless it also contains "2026" and an active keyword ("open", "apply", "live", etc.).
+- **Stale content rejection:** Results containing "ended", "concluded", "recap", "results announced", "archive", "past hackathon", or "winners announced" are rejected unless overridden by current-year + open signals.
+- **Date-based rejection:** If a date is parseable from the snippet/title (e.g., "Jan 15, 2023"), and it is older than `X_MAX_RESULT_AGE_DAYS` (default 30), the result is dropped.
+- **RSS/feed date filtering:** RSS items with `pubDate`/`published` timestamps older than `X_MAX_RESULT_AGE_DAYS` are rejected.
+- **Web search current-signal requirement:** Web search fallback results must contain at least one current/open signal ("open", "apply", "register", "deadline", "submit", "now", "2026", "this week", etc.) in addition to opportunity keywords.
+- **Logging:** Production logs show how many results were rejected for staleness, e.g. `X/Twitter web search fallback: rejected 3 stale result(s)`.
 
 **Logging:** Production logs show per-path result counts, e.g. `X/Twitter: found 5 opportunities across 11 queries (nitter: 0, syndication: 0, rss: 0, websearch: 5)`.
 
