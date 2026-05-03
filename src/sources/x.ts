@@ -3,6 +3,7 @@ import type { AnyNode } from 'domhandler';
 import { RawOpportunity, Scanner } from '../types';
 import { log } from '../config';
 import { fetchPage } from '../http';
+import { unwrapRedirectUrl } from '../url';
 
 const DEFAULT_QUERIES = [
   'hackathon',
@@ -18,10 +19,22 @@ const DEFAULT_QUERIES = [
   'ai hackathon prize',
 ];
 
+const WEB_SEARCH_QUERIES = [
+  'site:x.com hackathon bounty prize',
+  'site:x.com solana bounty',
+  'site:x.com dorahacks hackathon',
+  'site:x.com web3 grant',
+  'site:twitter.com hackathon prize 2025 OR 2026',
+  'site:x.com superteam bounty',
+  'site:x.com ethglobal hackathon',
+  'site:x.com ai hackathon prize',
+];
+
 export class XScanner implements Scanner {
   name = 'X/Twitter';
 
   private queries: string[];
+  private stats = { nitter: 0, syndication: 0, rss: 0, websearch: 0 };
 
   constructor() {
     const custom = process.env.X_SEARCH_QUERIES?.trim();
@@ -31,6 +44,7 @@ export class XScanner implements Scanner {
   async scan(): Promise<RawOpportunity[]> {
     const opportunities: RawOpportunity[] = [];
     const seenUrls = new Set<string>();
+    this.stats = { nitter: 0, syndication: 0, rss: 0, websearch: 0 };
 
     for (const query of this.queries) {
       try {
@@ -47,7 +61,20 @@ export class XScanner implements Scanner {
       }
     }
 
-    log.info(`X/Twitter: found ${opportunities.length} opportunities across ${this.queries.length} queries`);
+    if (opportunities.length === 0) {
+      log.info('X/Twitter: Nitter/syndication/RSS found 0 results, trying web search fallback');
+      const webResults = await this.webSearchFallback();
+      for (const opp of webResults) {
+        if (!seenUrls.has(opp.url)) {
+          seenUrls.add(opp.url);
+          opportunities.push(opp);
+        }
+      }
+    }
+
+    log.info(`X/Twitter: found ${opportunities.length} opportunities across ${this.queries.length} queries ` +
+      `(nitter: ${this.stats.nitter}, syndication: ${this.stats.syndication}, ` +
+      `rss: ${this.stats.rss}, websearch: ${this.stats.websearch})`);
     return opportunities;
   }
 
@@ -59,6 +86,7 @@ export class XScanner implements Scanner {
       try {
         const found = await this.searchNitter(instance, query);
         if (found.length > 0) {
+          this.stats.nitter += found.length;
           results.push(...found);
           break;
         }
@@ -70,6 +98,7 @@ export class XScanner implements Scanner {
     if (results.length === 0) {
       try {
         const found = await this.searchSyndex(query);
+        if (found.length > 0) this.stats.syndication += found.length;
         results.push(...found);
       } catch (e) {
         log.debug(`X: syndication fallback failed for "${query}":`, (e as Error).message);
@@ -79,6 +108,7 @@ export class XScanner implements Scanner {
     if (results.length === 0) {
       try {
         const found = await this.searchRss(query);
+        if (found.length > 0) this.stats.rss += found.length;
         results.push(...found);
       } catch (e) {
         log.debug(`X: RSS fallback failed for "${query}":`, (e as Error).message);
@@ -272,6 +302,154 @@ export class XScanner implements Scanner {
     }
 
     return results;
+  }
+
+  private async webSearchFallback(): Promise<RawOpportunity[]> {
+    const results: RawOpportunity[] = [];
+    const seenUrls = new Set<string>();
+
+    for (const query of WEB_SEARCH_QUERIES) {
+      try {
+        const found = await this.searchWebForXPosts(query);
+        for (const opp of found) {
+          if (!seenUrls.has(opp.url)) {
+            seenUrls.add(opp.url);
+            results.push(opp);
+          }
+        }
+        await sleep(2000 + Math.random() * 2000);
+      } catch (e) {
+        log.debug(`X: web search fallback failed for "${query}":`, (e as Error).message);
+      }
+    }
+
+    this.stats.websearch += results.length;
+    log.info(`X/Twitter web search fallback: found ${results.length} results from ${WEB_SEARCH_QUERIES.length} queries`);
+    return results;
+  }
+
+  private async searchWebForXPosts(query: string): Promise<RawOpportunity[]> {
+    const results: RawOpportunity[] = [];
+
+    const ddgUrl = `https://html.duckduckgo.com/html/?q=${encodeURIComponent(query)}`;
+    const html = await fetchPage(ddgUrl);
+    if (!html) return results;
+
+    const $ = cheerio.load(html);
+
+    $('.result, .web-result, .results_links').each((_, el) => {
+      try {
+        const $el = $(el);
+        const titleEl = $el.find('.result__title, .result__a, a.result__url, h2 a').first();
+        const title = titleEl.text().trim();
+        let href = titleEl.attr('href') || $el.find('a').first().attr('href') || '';
+
+        if (href.includes('duckduckgo.com/l/?')) {
+          href = unwrapRedirectUrl(href.startsWith('http') ? href : `https://duckduckgo.com${href}`);
+        }
+        if (!href || !href.startsWith('http')) return;
+
+        href = canonicalizeXUrl(href);
+
+        if (!isXUrl(href)) return;
+
+        const snippet = $el.find('.result__snippet, .result__body, .snippet').text().trim();
+        const combined = `${title} ${snippet}`.toLowerCase();
+
+        if (!isOpportunityTweet(`${title} ${snippet}`)) return;
+
+        const parsed = parseTweetContent(`${title} ${snippet}`, '');
+
+        results.push({
+          title: parsed.title || title || 'X/Twitter Post',
+          url: href,
+          source: 'X/Twitter',
+          type: parsed.type,
+          prize: parsed.prize,
+          deadline: parsed.deadline,
+          tags: parsed.tags,
+          region: 'Global',
+          isRemote: true,
+          isOpen: true,
+          summary: snippet.slice(0, 200) || undefined,
+        });
+      } catch (e) {
+        log.debug('X: error parsing web search result', e);
+      }
+    });
+
+    if (results.length === 0) {
+      try {
+        const braveUrl = `https://search.brave.com/search?q=${encodeURIComponent(query)}&source=web`;
+        const braveHtml = await fetchPage(braveUrl);
+        if (braveHtml) {
+          const $b = cheerio.load(braveHtml);
+          $b('#results .snippet, .fdb, [data-type="web"]').each((_, el) => {
+            try {
+              const $el = $b(el);
+              const titleEl = $el.find('.snippet-title, .title, h3, a').first();
+              const title = titleEl.text().trim();
+              let href = $el.find('a').first().attr('href') || titleEl.attr('href') || '';
+              if (!href || !href.startsWith('http')) return;
+
+              href = canonicalizeXUrl(href);
+              if (!isXUrl(href)) return;
+
+              const snippet = $el.find('.snippet-description, .snippet-content, p').text().trim();
+              if (!isOpportunityTweet(`${title} ${snippet}`)) return;
+
+              const parsed = parseTweetContent(`${title} ${snippet}`, '');
+
+              results.push({
+                title: parsed.title || title || 'X/Twitter Post',
+                url: href,
+                source: 'X/Twitter',
+                type: parsed.type,
+                prize: parsed.prize,
+                deadline: parsed.deadline,
+                tags: parsed.tags,
+                region: 'Global',
+                isRemote: true,
+                isOpen: true,
+                summary: snippet.slice(0, 200) || undefined,
+              });
+            } catch (e) {
+              log.debug('X: error parsing Brave web search result', e);
+            }
+          });
+        }
+      } catch (e) {
+        log.debug('X: Brave web search fallback failed:', (e as Error).message);
+      }
+    }
+
+    return results;
+  }
+}
+
+function isXUrl(url: string): boolean {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '').toLowerCase();
+    return host === 'x.com' || host === 'twitter.com';
+  } catch {
+    return false;
+  }
+}
+
+function canonicalizeXUrl(url: string): string {
+  try {
+    const u = new URL(url);
+    const host = u.hostname.replace(/^www\./, '').replace(/^mobile\./, '').toLowerCase();
+    if (host === 'twitter.com' || host === 'x.com') {
+      u.hostname = 'x.com';
+      u.search = '';
+      u.hash = '';
+      return u.toString();
+    }
+    return url;
+  } catch {
+    return url;
   }
 }
 
