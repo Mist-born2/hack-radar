@@ -18,6 +18,11 @@ const AFRICA_REGIONS = [
   'lagos', 'nairobi', 'cape town', 'accra',
 ];
 
+const REMOTE_INDICATORS = [
+  'global', 'online', 'remote', 'virtual', 'worldwide', 'anywhere',
+  'open to all', 'open globally',
+];
+
 export function qualifies(opp: RawOpportunity): boolean {
   if (!isOpenOrUpcoming(opp)) {
     log.debug(`Rejected (closed/expired): ${opp.title}`);
@@ -45,34 +50,58 @@ export function qualifies(opp: RawOpportunity): boolean {
 function isOpenOrUpcoming(opp: RawOpportunity): boolean {
   if (opp.isOpen === false) return false;
 
+  const now = new Date();
+  const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
+
   if (opp.deadlineDate) {
-    const now = new Date();
-    const sevenDaysFromNow = new Date(now.getTime() + 7 * 24 * 60 * 60 * 1000);
     if (opp.deadlineDate < now) return false;
-    return true;
   }
+
+  if (opp.startDate) {
+    if (opp.startDate <= sevenDaysFromNow) {
+      return true;
+    }
+    if (opp.isOpen === true) {
+      return true;
+    }
+    log.debug(`Rejected (starts too far in future: ${opp.startDate.toISOString()}): ${opp.title}`);
+    return false;
+  }
+
+  if (opp.isOpen === true) return true;
 
   if (opp.deadline) {
     const lower = opp.deadline.toLowerCase();
     if (lower.includes('ended') || lower.includes('closed') || lower.includes('expired')) {
       return false;
     }
+    if (lower.includes('ongoing') || lower.includes('open') || lower.includes('rolling')) {
+      return true;
+    }
   }
 
-  return true;
+  const combined = `${opp.title} ${opp.summary || ''}`.toLowerCase();
+  const openIndicators = ['open', 'ongoing', 'active', 'live', 'accepting', 'apply now', 'register now', 'submit'];
+  if (openIndicators.some(k => combined.includes(k))) {
+    return true;
+  }
+
+  return opp.deadlineDate != null && opp.deadlineDate >= now;
 }
 
 function isRegionOk(opp: RawOpportunity): boolean {
   const region = (opp.region || '').toLowerCase();
   const combined = `${region} ${(opp.summary || '').toLowerCase()} ${(opp.title || '').toLowerCase()}`;
 
-  if (
-    region.includes('global') ||
-    region.includes('online') ||
-    region.includes('remote') ||
-    region.includes('virtual') ||
-    opp.isRemote === true
-  ) {
+  if (opp.isRemote === true) {
+    return true;
+  }
+
+  if (REMOTE_INDICATORS.some(r => region.includes(r))) {
+    return true;
+  }
+
+  if (REMOTE_INDICATORS.some(r => combined.includes(r))) {
     return true;
   }
 
@@ -86,7 +115,19 @@ function isRegionOk(opp: RawOpportunity): boolean {
     }
   }
 
-  return true;
+  const inPersonSignals = [
+    'in person', 'physical', 'venue:', 'location:',
+    'hosted at', 'held at', 'takes place at',
+  ];
+  if (inPersonSignals.some(s => combined.includes(s))) {
+    if (!AFRICA_REGIONS.some(r => combined.includes(r))) {
+      log.debug(`Rejected (in-person, no Africa signal): ${opp.title}`);
+      return false;
+    }
+  }
+
+  log.debug(`Rejected (unknown region, not confirmed remote/global): ${opp.title}`);
+  return false;
 }
 
 function hasPrizeOrReward(opp: RawOpportunity): boolean {

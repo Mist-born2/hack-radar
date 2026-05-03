@@ -10,6 +10,7 @@ export interface RawOpportunity {
   prize?: string;
   deadline?: string;
   deadlineDate?: Date;
+  startDate?: Date;
   tags: string[];
   region?: string;
   summary?: string;

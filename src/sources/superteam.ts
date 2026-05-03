@@ -128,6 +128,7 @@ export class SuperteamScanner implements Scanner {
             prize,
             deadline,
             deadlineDate: item.deadline ? new Date(item.deadline as string) : undefined,
+            startDate: (item.publishedAt || item.startDate) ? new Date((item.publishedAt || item.startDate) as string) : undefined,
             tags: [...new Set(tags)],
             region: 'Global',
             isRemote: true,

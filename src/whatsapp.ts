@@ -119,36 +119,30 @@ export async function sendAlerts(opportunities: QualifiedOpportunity[]): Promise
 
   let sent = 0;
 
+  if (toSend.length >= 3) {
+    await sendMessage(formatIntroMessage(toSend.length));
+    await sleep(1000);
+  }
+
   for (const opp of highPriority) {
     const success = await sendMessage(formatAlert(opp));
     if (success) {
-      recordAlert(opp);
+      if (!config.dryRun) recordAlert(opp);
       sent++;
     }
     await sleep(1500);
-  }
-
-  if (rest.length > 0 || (highPriority.length > 0 && rest.length > 0)) {
-    const totalNew = highPriority.length + rest.length;
-    if (totalNew >= 3) {
-      await sendMessage(formatIntroMessage(totalNew));
-      await sleep(1000);
-    }
-  } else if (highPriority.length === 0 && toSend.length >= 3) {
-    await sendMessage(formatIntroMessage(toSend.length));
-    await sleep(1000);
   }
 
   for (const opp of rest) {
     const success = await sendMessage(formatAlert(opp));
     if (success) {
-      recordAlert(opp);
+      if (!config.dryRun) recordAlert(opp);
       sent++;
     }
     await sleep(1500);
   }
 
-  log.info(`Sent ${sent}/${toSend.length} alerts`);
+  log.info(`Sent ${sent}/${toSend.length} alerts${config.dryRun ? ' (dry-run, not persisted)' : ''}`);
   return sent;
 }
 

@@ -109,6 +109,7 @@ export class DoraHacksScanner implements Scanner {
             prize,
             deadline,
             deadlineDate: item.endTime ? new Date(item.endTime as string) : undefined,
+            startDate: item.startTime ? new Date(item.startTime as string) : undefined,
             tags,
             region: 'Global',
             isRemote: true,

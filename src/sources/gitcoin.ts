@@ -112,8 +112,10 @@ export class GitcoinScanner implements Scanner {
           }
 
           const endStr = (round.roundEndTime as string) || (round.applicationsEndTime as string);
+          const startStr = (round.roundStartTime as string) || (round.applicationsStartTime as string);
           let deadline: string | undefined;
           let deadlineDate: Date | undefined;
+          let startDate: Date | undefined;
           let isOpen = true;
           if (endStr) {
             deadlineDate = new Date(typeof endStr === 'number' ? endStr * 1000 : endStr);
@@ -124,6 +126,9 @@ export class GitcoinScanner implements Scanner {
               year: 'numeric', month: 'short', day: 'numeric'
             });
           }
+          if (startStr) {
+            startDate = new Date(typeof startStr === 'number' ? startStr * 1000 : startStr);
+          }
 
           opportunities.push({
             title: name,
@@ -133,6 +138,7 @@ export class GitcoinScanner implements Scanner {
             prize,
             deadline,
             deadlineDate,
+            startDate,
             tags: ['Web3', 'Ethereum', 'Public Goods'],
             region: 'Global',
             isRemote: true,
