@@ -1,0 +1,28 @@
+{
+  "name": "hackathon-radar",
+  "version": "1.0.0",
+  "description": "Autonomous hackathon and bounty hunting bot with WhatsApp alerts",
+  "main": "dist/index.js",
+  "scripts": {
+    "build": "tsc",
+    "start": "node dist/index.js",
+    "dev": "ts-node src/index.ts",
+    "clean": "rm -rf dist"
+  },
+  "keywords": ["hackathon", "bounty", "web3", "whatsapp", "bot"],
+  "license": "MIT",
+  "dependencies": {
+    "better-sqlite3": "^11.7.0",
+    "cheerio": "^1.0.0",
+    "node-cron": "^3.0.3",
+    "rss-parser": "^3.13.0",
+    "whatsapp-web.js": "^1.26.1-alpha.3",
+    "qrcode-terminal": "^0.12.0"
+  },
+  "devDependencies": {
+    "@types/better-sqlite3": "^7.6.12",
+    "@types/node": "^22.10.0",
+    "@types/node-cron": "^3.0.11",
+    "typescript": "^5.7.0"
+  }
+}
